@@ -49,6 +49,10 @@ def test_make_entry_id_and_log_id() -> None:
 def test_parse_jpy_int_and_dates() -> None:
     assert parse_jpy_int("¥12,100") == 12100
     assert parse_jpy_int("１２，１００円（税込）") == 12100
+    assert parse_jpy_int("￥21,600  ～ ￥27,000 ") == 21600
+    assert parse_jpy_int("20%OFF ￥32,800 ￥41,000") == 32800
+    assert parse_jpy_int("8,600円 (元値 9,500円)") == 8600
+    assert parse_jpy_int("数量：2") == 2
     assert parse_jpy_int("") is None
     assert parse_jpy_int(None) is None
     assert clean_jan_code("4573-1026-50000") == "4573102650000"

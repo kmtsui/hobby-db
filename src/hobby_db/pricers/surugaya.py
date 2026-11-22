@@ -52,7 +52,10 @@ def parse_surugaya_search_html(
                 if price_node.parent is not None
                 else price_node.get_text(" ", strip=True)
             )
-            own_text = price_node.get_text(" ", strip=True)
+            price_fragment = BeautifulSoup(str(price_node), "html.parser")
+            for strike in price_fragment.select("del, s, strike, .price_del, .del"):
+                strike.decompose()
+            own_text = price_fragment.get_text(" ", strip=True)
             if _BUYBACK_OR_MSRP_RE.search(own_text) or (
                 _BUYBACK_OR_MSRP_RE.search(parent_text) and "中古" not in parent_text
             ):

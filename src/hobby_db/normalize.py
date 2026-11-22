@@ -24,6 +24,8 @@ _LENTICULAR_BRACKET_RE = re.compile(r"【[^】]*】")
 _PAREN_SALE_TAG_RE = re.compile(r"\((?:\d+次[:：][^)]*|[^)]*(?:発送|抽選販売|再販|受注生産))\)")
 _WHITESPACE_RE = re.compile(r"\s+")
 _JAN_DIGITS_RE = re.compile(r"\D+")
+_CURRENCY_AMOUNT_RE = re.compile(r"(?:[¥￥]\s*(\d[\d,]*)|(\d[\d,]*)\s*円)")
+_FIRST_NUMBER_RE = re.compile(r"\d[\d,]*")
 
 _JP_FULL_DATE_RE = re.compile(r"(\d{4})\s*[年/\-]\s*(\d{1,2})\s*[月/\-]\s*(\d{1,2})\s*日?")
 _JP_MONTH_RE = re.compile(r"(\d{4})\s*[年/\-]\s*(\d{1,2})\s*月?")
@@ -101,10 +103,14 @@ def parse_jpy_int(raw: str | int | float | None) -> int | None:
     text = unicodedata.normalize("NFKC", str(raw)).strip()
     if not text:
         return None
-    digits = re.sub(r"[^\d]", "", text)
-    if not digits:
+    currency_match = _CURRENCY_AMOUNT_RE.search(text)
+    if currency_match:
+        digits = (currency_match.group(1) or currency_match.group(2)).replace(",", "")
+        return int(digits)
+    number_match = _FIRST_NUMBER_RE.search(text)
+    if not number_match:
         return None
-    return int(digits)
+    return int(number_match.group(0).replace(",", ""))
 
 
 def parse_jp_date(raw: str | None) -> str:

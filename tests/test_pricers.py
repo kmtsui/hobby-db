@@ -181,3 +181,20 @@ def test_surugaya_pricer_parses_html_and_filters_junk() -> None:
     assert quote.median_price_jpy == 6400
     assert quote.sample_size == 2
     assert quote.filtered_junk_count == 1
+
+
+def test_surugaya_pricer_handles_price_ranges_and_strikethrough_discounts() -> None:
+    mock_html = """
+    <html><body>
+      <div class="item_box">
+        <p class="title"><a href="/product/detail/201">METAL BUILD デスティニーガンダム(ハイネ機)</a></p>
+        <div class="price_teika"><span class="text-red"><strong>￥21,600  ～ ￥27,000 </strong></span></div>
+      </div>
+      <div class="item_box">
+        <p class="title"><a href="/product/detail/202">METAL BUILD デスティニーガンダム(ハイネ機)</a></p>
+        <div class="price_teika">中古：<strong><del>￥27,000</del> ￥22,000</strong></div>
+      </div>
+    </body></html>
+    """
+    parsed = parse_surugaya_search_html(mock_html)
+    assert [item.price_jpy for item in parsed] == [21600, 22000]
