@@ -33,13 +33,25 @@ In **Data -> Inventory -> Add virtual column**, paste these two formulas:
 Compares the current sealed/used market price (or realized `sold_price_jpy` if sold) against purchase cost plus shipping:
 ```appsheet
 IF(
-  [status] = "Sold",
-  [sold_price_jpy] - ([purchase_price_jpy] + [shipping_jpy]),
+  [status] = "Cancelled",
+  0,
   IF(
-    [condition] = "Sealed",
-    [item_id].[market_price_new],
-    COALESCE([item_id].[market_price_used], [item_id].[market_price_new])
-  ) - ([purchase_price_jpy] + [shipping_jpy])
+    [status] = "Sold",
+    [sold_price_jpy] - ([purchase_price_jpy] + [shipping_jpy]),
+    IF(
+      [condition] = "Sealed",
+      IF(
+        ISNOTBLANK([item_id].[market_price_new]),
+        [item_id].[market_price_new],
+        [item_id].[market_price_used]
+      ),
+      IF(
+        ISNOTBLANK([item_id].[market_price_used]),
+        [item_id].[market_price_used],
+        [item_id].[market_price_new]
+      )
+    ) - ([purchase_price_jpy] + [shipping_jpy])
+  )
 )
 ```
 
