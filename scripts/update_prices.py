@@ -1,18 +1,139 @@
-"""CLI to refresh stale Catalog market prices and append snapshots to PriceHistory."""
+"""CLI to refresh stale Catalog market prices across zero-token sources and log PriceHistory."""
 
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from pathlib import Path
 
-from hobby_db.config import load_settings
-from hobby_db.models import CatalogPriceUpdate, PriceHistoryRecord
+from hobby_db.config import Settings, load_settings
+from hobby_db.models import CatalogItem, CatalogPriceUpdate, PriceHistoryRecord
 from hobby_db.normalize import make_log_id
-from hobby_db.pricers.base import BasePricer, is_item_stale
+from hobby_db.pricers.base import (
+    BasePricer,
+    PriceListing,
+    PriceQuote,
+    aggregate_listings,
+    is_item_stale,
+    is_junk_listing,
+)
+from hobby_db.pricers.jungle import JunglePricer
+from hobby_db.pricers.kakaku import KakakuPricer
+from hobby_db.pricers.mandarake import MandarakePricer
 from hobby_db.pricers.rakuten import RakutenPricer
 from hobby_db.pricers.surugaya import SurugayaPricer
+from hobby_db.pricers.yahoo_auctions import YahooAuctionsPricer
+from hobby_db.pricers.yahoo_shopping import YahooShoppingPricer
 from hobby_db.sheets.client import HobbySheetsClient
+
+DEFAULT_SOURCES = "mandarake,surugaya,yahoo_shopping,kakaku,yahoo_auctions,jungle"
+
+
+def build_domain_pricers(
+    requested_sources: Sequence[str],
+    conditions: Sequence[str],
+    settings: Settings,
+) -> dict[str, dict[str, BasePricer]]:
+    """Instantiate per-domain pricers for the requested sources and conditions."""
+    domain_pricers: dict[str, dict[str, BasePricer]] = {}
+
+    for source in requested_sources:
+        if source == "rakuten":
+            if not settings.rakuten_app_id:
+                print("Skipping rakuten pricer: RAKUTEN_APP_ID is not set.")
+                continue
+            if "new" in conditions:
+                domain_pricers["rakuten"] = {
+                    "new": RakutenPricer(
+                        app_id=settings.rakuten_app_id,
+                        affiliate_id=settings.rakuten_affiliate_id,
+                    )
+                }
+        elif source == "mandarake":
+            domain_pricers["mandarake"] = {"both": MandarakePricer(condition="used")}
+        elif source == "surugaya":
+            domain_pricers["surugaya"] = {c: SurugayaPricer(condition=c) for c in conditions}
+        elif source == "yahoo_shopping":
+            domain_pricers["yahoo_shopping"] = {"both": YahooShoppingPricer(condition="new")}
+        elif source == "kakaku":
+            domain_pricers["kakaku"] = {c: KakakuPricer(condition=c) for c in conditions}
+        elif source == "yahoo_auctions":
+            domain_pricers["yahoo_auctions"] = {
+                c: YahooAuctionsPricer(condition=c) for c in conditions
+            }
+        elif source == "jungle":
+            domain_pricers["jungle"] = {c: JunglePricer(condition=c) for c in conditions}
+        else:
+            print(f"Unknown source ignored: {source}")
+
+    return domain_pricers
+
+
+def _fetch_domain_listings(
+    cond_pricers: dict[str, BasePricer],
+    item: CatalogItem,
+    conditions: Sequence[str],
+) -> dict[str, list[PriceListing]]:
+    """Fetch new/used listings sequentially for a single domain."""
+    result: dict[str, list[PriceListing]] = {"new": [], "used": []}
+    if "both" in cond_pricers:
+        both_pricer = cond_pricers["both"]
+        if isinstance(both_pricer, (MandarakePricer, YahooShoppingPricer)):
+            new_hits, used_hits = both_pricer.fetch_both_conditions(item)
+            if "new" in conditions:
+                result["new"] = new_hits
+            if "used" in conditions:
+                result["used"] = used_hits
+            return result
+
+    for cond in conditions:
+        pricer = cond_pricers.get(cond)
+        if pricer is not None:
+            result[cond] = pricer.fetch_listings(item)
+    return result
+
+
+def fetch_item_quotes(
+    item: CatalogItem,
+    domain_pricers: dict[str, dict[str, BasePricer]],
+    conditions: Sequence[str],
+) -> tuple[PriceQuote | None, PriceQuote | None]:
+    """Query all configured domains concurrently and compute pooled new/used median quotes."""
+    pooled: dict[str, list[PriceListing]] = {"new": [], "used": []}
+
+    with ThreadPoolExecutor(max_workers=max(1, len(domain_pricers))) as executor:
+        futures = [
+            executor.submit(_fetch_domain_listings, cond_pricers, item, conditions)
+            for cond_pricers in domain_pricers.values()
+        ]
+        for future in as_completed(futures):
+            domain_result = future.result()
+            pooled["new"].extend(domain_result.get("new", []))
+            pooled["used"].extend(domain_result.get("used", []))
+
+    quotes: dict[str, PriceQuote | None] = {"new": None, "used": None}
+    for cond in conditions:
+        listings = pooled.get(cond, [])
+        contributors = sorted(
+            {
+                listing.source
+                for listing in listings
+                if listing.price_jpy > 0 and not is_junk_listing(listing.title)
+            }
+        )
+        if not contributors:
+            continue
+        quote = aggregate_listings(
+            listings=listings,
+            source=",".join(contributors),
+            condition=cond,
+        )
+        if quote.median_price_jpy is not None:
+            quotes[cond] = quote
+
+    return quotes["new"], quotes["used"]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -38,8 +159,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--sources",
-        default="rakuten,surugaya",
-        help="Comma-separated price sources to query (default: rakuten,surugaya).",
+        default=DEFAULT_SOURCES,
+        help=f"Comma-separated price sources to query (default: {DEFAULT_SOURCES}).",
+    )
+    parser.add_argument(
+        "--conditions",
+        default="new,used",
+        help="Comma-separated conditions to fetch: new, used, or new,used (default: new,used).",
     )
     parser.add_argument(
         "--dry-run",
@@ -61,25 +187,29 @@ def main(argv: list[str] | None = None) -> int:
     settings = load_settings(args.env_file)
     stale_days = args.stale_days if args.stale_days is not None else settings.stale_days
 
-    requested_sources = [s.strip().lower() for s in args.sources.split(",") if s.strip()]
-    pricers: list[BasePricer] = []
-    for source in requested_sources:
-        if source == "rakuten":
-            if not settings.rakuten_app_id:
-                print("Skipping rakuten pricer: RAKUTEN_APP_ID is not set.")
-                continue
-            pricers.append(
-                RakutenPricer(
-                    app_id=settings.rakuten_app_id,
-                    affiliate_id=settings.rakuten_affiliate_id,
-                )
-            )
-        elif source == "surugaya":
-            pricers.append(SurugayaPricer())
-        else:
-            print(f"Unknown source ignored: {source}")
+    requested_sources = list(
+        dict.fromkeys(s.strip().lower() for s in args.sources.split(",") if s.strip())
+    )
+    if (
+        args.sources == DEFAULT_SOURCES
+        and settings.rakuten_app_id
+        and "rakuten" not in requested_sources
+    ):
+        requested_sources.append("rakuten")
 
-    if not pricers:
+    conditions = list(
+        dict.fromkeys(
+            c.strip().lower()
+            for c in args.conditions.split(",")
+            if c.strip().lower() in ("new", "used")
+        )
+    )
+    if not conditions:
+        print("No valid conditions specified (expected new, used). Exiting.")
+        return 0
+
+    domain_pricers = build_domain_pricers(requested_sources, conditions, settings)
+    if not domain_pricers:
         print("No active price sources configured. Exiting.")
         return 0
 
@@ -113,27 +243,23 @@ def main(argv: list[str] | None = None) -> int:
         history_records: list[PriceHistoryRecord] = []
 
         for item in targets:
-            price_new: int | None = None
-            price_used: int | None = None
-            used_sources: list[str] = []
-            sample_total = 0
-
-            for pricer in pricers:
-                quote = pricer.get_quote(item)
-                if quote.median_price_jpy is None:
-                    continue
-                used_sources.append(quote.source)
-                sample_total += quote.sample_size
-                if quote.condition == "new":
-                    price_new = quote.median_price_jpy
-                elif quote.condition == "used":
-                    price_used = quote.median_price_jpy
-
-            if not used_sources:
+            new_quote, used_quote = fetch_item_quotes(item, domain_pricers, conditions)
+            if new_quote is None and used_quote is None:
                 print(f"No quotes found for {item.item_id} ({item.title})")
                 continue
 
-            source_label = ",".join(used_sources)
+            price_new = new_quote.median_price_jpy if new_quote else None
+            price_used = used_quote.median_price_jpy if used_quote else None
+            all_sources: set[str] = set()
+            sample_total = 0
+            if new_quote:
+                all_sources.update(s for s in new_quote.source.split(",") if s)
+                sample_total += new_quote.sample_size
+            if used_quote:
+                all_sources.update(s for s in used_quote.source.split(",") if s)
+                sample_total += used_quote.sample_size
+
+            source_label = ",".join(sorted(all_sources))
             price_updates.append(
                 CatalogPriceUpdate(
                     item_id=item.item_id,
@@ -154,9 +280,11 @@ def main(argv: list[str] | None = None) -> int:
                     sample_size=sample_total,
                 )
             )
+            new_n = new_quote.sample_size if new_quote else 0
+            used_n = used_quote.sample_size if used_quote else 0
             print(
-                f"Quoted {item.item_id}: new={price_new} used={price_used} "
-                f"source={source_label} samples={sample_total}"
+                f"Quoted {item.item_id}: new={price_new} (n={new_n}) "
+                f"used={price_used} (n={used_n}) sources={source_label}"
             )
 
         if args.dry_run:
@@ -172,10 +300,11 @@ def main(argv: list[str] | None = None) -> int:
             print("No market quotes obtained; sheet left unchanged.")
         return 0
     finally:
-        for pricer in pricers:
-            close_fn = getattr(pricer, "close", None)
-            if callable(close_fn):
-                close_fn()
+        for cond_pricers in domain_pricers.values():
+            for pricer in cond_pricers.values():
+                close_fn = getattr(pricer, "close", None)
+                if callable(close_fn):
+                    close_fn()
 
 
 if __name__ == "__main__":

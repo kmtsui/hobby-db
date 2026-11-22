@@ -31,8 +31,9 @@ def parse_surugaya_search_html(
     html: str,
     base_url: str = "https://www.suruga-ya.jp",
     selectors: dict[str, str] | None = None,
+    condition: str = "used",
 ) -> list[PriceListing]:
-    """Parse Surugaya search results HTML into second-hand PriceListing items."""
+    """Parse Surugaya search results HTML into PriceListing items."""
     sel = selectors or SURUGAYA_SELECTORS
     soup = BeautifulSoup(html, "html.parser")
     listings: list[PriceListing] = []
@@ -57,7 +58,9 @@ def parse_surugaya_search_html(
                 strike.decompose()
             own_text = price_fragment.get_text(" ", strip=True)
             if _BUYBACK_OR_MSRP_RE.search(own_text) or (
-                _BUYBACK_OR_MSRP_RE.search(parent_text) and "中古" not in parent_text
+                _BUYBACK_OR_MSRP_RE.search(parent_text)
+                and "中古" not in parent_text
+                and "新品" not in parent_text
             ):
                 continue
             parsed = parse_jpy_int(own_text)
@@ -77,7 +80,7 @@ def parse_surugaya_search_html(
                 title=title,
                 price_jpy=price_jpy,
                 source="surugaya",
-                condition="used",
+                condition=condition,
                 url=full_url,
             )
         )
@@ -86,17 +89,20 @@ def parse_surugaya_search_html(
 
 
 class SurugayaPricer(BasePricer):
-    """Fetch second-hand prices from Surugaya with randomized 2-4s polite delays."""
+    """Fetch new or used prices from Surugaya with randomized 2-4s polite delays."""
 
     source_name = "surugaya"
-    condition = "used"
 
     def __init__(
         self,
+        condition: str = "used",
         client: httpx.Client | None = None,
         min_delay: float = 2.0,
         max_delay: float = 4.0,
     ) -> None:
+        if condition not in ("new", "used"):
+            raise ValueError(f"Unsupported condition: {condition}")
+        self.condition = condition
         self.min_delay = min_delay
         self.max_delay = max_delay
         self._owns_client = client is None
@@ -122,15 +128,20 @@ class SurugayaPricer(BasePricer):
             time.sleep(random.uniform(self.min_delay, self.max_delay))
 
     def _search_word(self, query: str) -> list[PriceListing]:
+        classified = "新品" if self.condition == "new" else "中古"
         try:
             response = self._client.get(
                 SURUGAYA_SEARCH_URL,
-                params={"search_word": query, "inStock": "On"},
+                params={
+                    "search_word": query,
+                    "inStock": "On",
+                    "sale_classified": classified,
+                },
             )
             if response.status_code in (403, 404, 429):
                 return []
             response.raise_for_status()
-            return parse_surugaya_search_html(response.text)
+            return parse_surugaya_search_html(response.text, condition=self.condition)
         except httpx.HTTPError:
             return []
 
