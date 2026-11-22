@@ -144,6 +144,8 @@ def parse_delivery_month(raw: str | None) -> str:
 _SERIES_RULES: tuple[tuple[str, str, str], ...] = (
     ("METAL BUILD", "Tamashii Nations", "METAL BUILD"),
     ("METAL ROBOT魂", "Tamashii Nations", "METAL ROBOT魂"),
+    ("GUNDAM FIX FIGURATION", "Tamashii Nations", "GFFMC"),
+    ("METAL COMPOSITE", "Tamashii Nations", "GFFMC"),
     ("ROBOT魂", "Tamashii Nations", "ROBOT魂"),
     ("S.H.Figuarts", "Tamashii Nations", "S.H.Figuarts"),
     ("S.H.MonsterArts", "Tamashii Nations", "S.H.MonsterArts"),

@@ -12,6 +12,7 @@ credentials*.json
 # Crawled data & HTML debug dumps
 data/*.csv
 data/debug_html/
+data/saved_html/
 
 # Python / uv / pytest artifacts
 .venv/

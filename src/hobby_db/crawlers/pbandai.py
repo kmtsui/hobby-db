@@ -22,6 +22,8 @@ PBANDAI_MYORDER_URL = "https://p-bandai.jp/myorder/"
 # Use scripts/crawl_pbandai.py --dump-html to inspect live order history HTML if selectors break.
 SELECTORS: dict[str, str] = {
     "login_indicator": "form[action*='login'], input[name='loginId'], .p-login, #loginForm",
+    "order_table": "table.myp-table-order",
+    "order_table_badge": "span.goods-stat",
     "order_card": ".p-order-history__item, .order-history-box, .myorder-item, article[data-order-id]",
     "order_id": ".p-order-history__order-number, .order-number, [data-order-number]",
     "order_date": ".p-order-history__order-date, .order-date, [data-order-date]",
@@ -39,6 +41,10 @@ SELECTORS: dict[str, str] = {
 _PREFIX_STRIP_RE = re.compile(
     r"^(?:注文番号|ご注文番号|注文日|ご注文日|注文状況|ステータス|送料|配送手数料|数量|個数|お届け月|発送予定)\s*[:：]\s*"
 )
+_ORDER_NO_RE = re.compile(r"No\.\s*([A-Za-z0-9\-]+)")
+_ORDER_HREF_RE = re.compile(r"/myorder_d/([A-Za-z0-9\-]+)/?")
+_EXTRA_ITEMS_RE = re.compile(r"^他\d+品$")
+_CONSOLIDATED_INTO_RE = re.compile(r"おまとめ済み\s*([A-Za-z0-9\-]+)")
 
 
 def _clean_text(node: Tag | None) -> str:
@@ -64,7 +70,7 @@ def _resolve_image_url(container: Tag, selector: str, base_url: str) -> str:
 
 def is_login_required(
     url: str,
-    html: str,
+    html: str | bytes,
     selectors: dict[str, str] | None = None,
 ) -> bool:
     """Detect whether Premium Bandai redirected to login/auth instead of order history."""
@@ -74,12 +80,15 @@ def is_login_required(
 
     sel = selectors or SELECTORS
     soup = BeautifulSoup(html, "html.parser")
-    if soup.select_one(sel["order_card"]) is not None:
+    if (
+        soup.select_one(sel["order_table"]) is not None
+        or soup.select_one(sel["order_card"]) is not None
+    ):
         return False
     return soup.select_one(sel["login_indicator"]) is not None
 
 
-def has_next_page(html: str, selectors: dict[str, str] | None = None) -> bool:
+def has_next_page(html: str | bytes, selectors: dict[str, str] | None = None) -> bool:
     """Return True if an enabled next-page link exists in the order history HTML."""
     sel = selectors or SELECTORS
     soup = BeautifulSoup(html, "html.parser")
@@ -93,14 +102,84 @@ def has_next_page(html: str, selectors: dict[str, str] | None = None) -> bool:
     return bool(href and href != "#")
 
 
+def _parse_myp_order_table(
+    soup: BeautifulSoup,
+    sel: dict[str, str],
+) -> list[PBandaiOrderRow]:
+    """Parse Premium Bandai's ``table.myp-table-order`` HTML layout."""
+    table = soup.select_one(sel["order_table"])
+    if table is None:
+        return []
+
+    rows: list[PBandaiOrderRow] = []
+    for tr in table.find_all("tr"):
+        tds = tr.find_all("td", recursive=False)
+        if len(tds) != 5:
+            continue
+
+        td0_text = tds[0].get_text(" ", strip=True)
+        order_date = parse_jp_date(td0_text) or td0_text
+        order_match = _ORDER_NO_RE.search(td0_text)
+        if order_match:
+            order_id = order_match.group(1).strip()
+        else:
+            anchor = tds[0].find("a")
+            href = (anchor.get("href") or "") if anchor is not None else ""
+            href_match = _ORDER_HREF_RE.search(href)
+            order_id = href_match.group(1).strip() if href_match else ""
+        if not order_id:
+            continue
+
+        # Work on a per-cell fragment copy so decomposing badge spans leaves soup intact.
+        title_cell = BeautifulSoup(str(tds[1]), "html.parser")
+        for badge in title_cell.select(sel["order_table_badge"]):
+            badge.decompose()
+        title_lines = [line.strip() for line in title_cell.stripped_strings if line.strip()]
+        extra_items_tag = ""
+        if len(title_lines) >= 2 and _EXTRA_ITEMS_RE.match(title_lines[-1]):
+            extra_items_tag = title_lines.pop()
+        item_title = " ".join(title_lines).strip()
+        if not item_title:
+            continue
+
+        delivery_month = parse_delivery_month(tds[2].get_text(" ", strip=True))
+
+        price_lines = [line.strip() for line in tds[3].stripped_strings if line.strip()]
+        unit_price = parse_jpy_int(price_lines[0]) if price_lines else None
+
+        order_status = " ".join(line.strip() for line in tds[4].stripped_strings if line.strip())
+        if extra_items_tag and "おまとめ注文" not in order_status:
+            order_status = f"{order_status} ({extra_items_tag})".strip()
+
+        rows.append(
+            PBandaiOrderRow(
+                order_id=order_id,
+                order_date=order_date,
+                item_title=item_title,
+                unit_price_jpy=unit_price,
+                quantity=1,
+                shipping_jpy=0,
+                order_status=order_status,
+                delivery_month=delivery_month,
+                image_url="",
+            )
+        )
+
+    return rows
+
+
 def parse_orders_html(
-    html: str,
+    html: str | bytes,
     base_url: str = "https://p-bandai.jp",
     selectors: dict[str, str] | None = None,
 ) -> list[PBandaiOrderRow]:
     """Parse Premium Bandai order history HTML into structured order rows."""
     sel = selectors or SELECTORS
     soup = BeautifulSoup(html, "html.parser")
+
+    if soup.select_one(sel["order_table"]) is not None:
+        return _parse_myp_order_table(soup, sel)
+
     rows: list[PBandaiOrderRow] = []
 
     for card in soup.select(sel["order_card"]):
@@ -151,6 +230,81 @@ def parse_orders_html(
             )
 
     return rows
+
+
+def resolve_consolidated_orders(rows: Sequence[PBandaiOrderRow]) -> list[PBandaiOrderRow]:
+    """Deduplicate consolidated wrapper orders and inherit their status on child orders.
+
+    Premium Bandai represents consolidated shipments (おまとめ注文) as a wrapper row
+    listing only the first item plus ``他N品`` alongside individual child rows marked
+    ``おまとめ済み <wrapper_id>``. When at least one child row is present, drop the
+    redundant wrapper row so cost and item count are not double-counted, and propagate
+    the wrapper's fulfillment status (e.g. ``配送完了``) down to each child row.
+    """
+    wrapper_statuses: dict[str, str] = {
+        row.order_id: row.order_status for row in rows if "おまとめ注文" in row.order_status
+    }
+    resolved_wrapper_ids: set[str] = set()
+    for row in rows:
+        match = _CONSOLIDATED_INTO_RE.search(row.order_status)
+        if match and match.group(1) in wrapper_statuses:
+            resolved_wrapper_ids.add(match.group(1))
+
+    resolved: list[PBandaiOrderRow] = []
+    for row in rows:
+        if row.order_id in resolved_wrapper_ids and "おまとめ注文" in row.order_status:
+            continue
+
+        match = _CONSOLIDATED_INTO_RE.search(row.order_status)
+        if match and match.group(1) in wrapper_statuses:
+            target_id = match.group(1)
+            base_status = wrapper_statuses[target_id].replace("おまとめ注文", "").strip()
+            new_status = (
+                f"{base_status} (おまとめ元: {target_id})"
+                if base_status
+                else f"おまとめ元: {target_id}"
+            )
+            resolved.append(row.model_copy(update={"order_status": new_status}))
+        else:
+            resolved.append(row)
+
+    return resolved
+
+
+def parse_orders_from_path(html_path: Path) -> list[PBandaiOrderRow]:
+    """Parse one saved order history HTML file or a directory of HTML pages offline."""
+    if not html_path.exists():
+        raise FileNotFoundError(f"Saved HTML path not found: {html_path}")
+
+    if html_path.is_dir():
+        html_files = sorted(
+            (
+                p
+                for p in html_path.iterdir()
+                if p.is_file() and p.suffix.lower() in {".htm", ".html"}
+            ),
+            key=lambda p: p.name,
+        )
+    else:
+        html_files = [html_path]
+
+    if not html_files:
+        raise FileNotFoundError(f"No .htm/.html files found in: {html_path}")
+
+    collected: list[PBandaiOrderRow] = []
+    seen_order_ids: set[str] = set()
+
+    for file_path in html_files:
+        page_rows = parse_orders_html(file_path.read_bytes())
+        page_order_ids: set[str] = set()
+        for row in page_rows:
+            if row.order_id in seen_order_ids:
+                continue
+            collected.append(row)
+            page_order_ids.add(row.order_id)
+        seen_order_ids.update(page_order_ids)
+
+    return resolve_consolidated_orders(collected)
 
 
 def export_orders_csv(rows: Sequence[PBandaiOrderRow], output_path: Path) -> Path:

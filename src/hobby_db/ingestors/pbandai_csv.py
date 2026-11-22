@@ -12,6 +12,7 @@ Quantity convention:
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from pathlib import Path
 
@@ -28,6 +29,9 @@ from hobby_db.normalize import (
     parse_jpy_int,
 )
 
+_EXTRA_ITEMS_NOTE_RE = re.compile(r"(他\d+品)")
+_CONSOLIDATED_NOTE_RE = re.compile(r"おまとめ元[:：]\s*([A-Za-z0-9\-]+)")
+
 
 def map_pbandai_status(raw_status: str) -> str:
     """Map Japanese or English Premium Bandai order status to Inventory enum values."""
@@ -42,6 +46,8 @@ def map_pbandai_status(raw_status: str) -> str:
                 "発送済",
                 "発送完了",
                 "配達完了",
+                "配送済",
+                "配送完了",
                 "出荷済",
                 "出荷完了",
                 "お届け済",
@@ -53,6 +59,17 @@ def map_pbandai_status(raw_status: str) -> str:
     ):
         return "Owned"
     return "Pre-ordered"
+
+
+def _extract_status_notes(raw_status: str) -> list[str]:
+    notes: list[str] = []
+    consolidated_match = _CONSOLIDATED_NOTE_RE.search(raw_status)
+    if consolidated_match:
+        notes.append(f"Consolidated into order {consolidated_match.group(1)}")
+    extra_match = _EXTRA_ITEMS_NOTE_RE.search(raw_status)
+    if extra_match:
+        notes.append(f"Contains {extra_match.group(1)} (check order detail)")
+    return notes
 
 
 def _merge_catalog_item(existing: CatalogItem, incoming: CatalogItem) -> CatalogItem:
@@ -100,7 +117,9 @@ def ingest_pbandai_csv(
         )
         release_date = parse_delivery_month(str(record.get("delivery_month", "")))
         image_url = str(record.get("image_url", "")).strip()
-        status = map_pbandai_status(str(record.get("order_status", "")))
+        raw_status = str(record.get("order_status", ""))
+        status = map_pbandai_status(raw_status)
+        status_notes = _extract_status_notes(raw_status)
 
         catalog_item = CatalogItem(
             item_id=item_id,
@@ -117,6 +136,7 @@ def ingest_pbandai_csv(
             catalog_by_id[item_id] = catalog_item
 
         if expand_quantity and quantity > 1:
+            base_notes = "; ".join(status_notes)
             for unit_idx in range(1, quantity + 1):
                 entry_id = make_entry_id("pbandai", order_id, line_index, unit_index=unit_idx)
                 inventory_entries.append(
@@ -130,11 +150,15 @@ def ingest_pbandai_csv(
                         shipping_jpy=shipping_jpy if unit_idx == 1 else 0,
                         condition="Sealed",
                         status=status,
+                        notes=base_notes,
                     )
                 )
         else:
             entry_id = make_entry_id("pbandai", order_id, line_index)
-            notes = f"Qty: {quantity}" if quantity > 1 else ""
+            notes_parts = [*status_notes]
+            if quantity > 1:
+                notes_parts.append(f"Qty: {quantity}")
+            notes = "; ".join(notes_parts)
             inventory_entries.append(
                 InventoryEntry(
                     entry_id=entry_id,

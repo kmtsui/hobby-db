@@ -8,7 +8,9 @@ from hobby_db.crawlers.pbandai import (
     export_orders_csv,
     has_next_page,
     is_login_required,
+    parse_orders_from_path,
     parse_orders_html,
+    resolve_consolidated_orders,
 )
 
 MOCK_MYORDER_HTML = """
@@ -126,3 +128,107 @@ def test_export_orders_csv_writes_utf8_bom(tmp_path: Path) -> None:
     assert len(df) == 3
     assert df.loc[0, "order_id"] == "PB-2025-0001"
     assert df.loc[0, "item_title"] == "【2次：2025年10月発送】MG 1/100 ガンダムMk-V"
+
+
+MOCK_MYP_TABLE_HTML_P1 = """
+<!doctype html>
+<html lang="ja">
+<head><meta charset="Shift_JIS"></head>
+<body>
+  <table class="myp-table myp-table-order">
+    <tr><th>注文日</th><th>商品名</th><th>発送月</th><th>ご注文金額</th><th>現在の状況</th></tr>
+    <tr>
+      <td rowspan="2"><a href="/myorder_d/00069/">2026/11/13<br>（No. 00069）</a></td>
+      <td><span class="goods-stat">予約品</span><br>METAL BUILD ガンダムキュリオス</td>
+      <td>2027年06月</td>
+      <td>39,160円 （税込）<br>クレジットカード</td>
+      <td>注文受付済</td>
+    </tr>
+    <tr><td colspan="4"><div class="myp-actions"></div></td></tr>
+    <tr>
+      <td rowspan="2"><a href="/myorder_d/00062/">2025/11/10<br>（No. 00062）</a></td>
+      <td><span class="goods-stat">在庫品</span><br>【PB対応品】METAL BUILD 交換用パーツ</td>
+      <td></td>
+      <td>0円 （税込）<br>元払</td>
+      <td>配送完了</td>
+    </tr>
+    <tr><td colspan="4"><div class="myp-actions"></div></td></tr>
+    <tr>
+      <td rowspan="2"><a href="/myorder_d/00042/">2023/3/14<br>（No. 00042）</a></td>
+      <td><span class="goods-stat">予約品</span><br>S.H.Figuarts 孫悟飯ビースト<br>他1品</td>
+      <td></td>
+      <td>60,790円 （税込）<br>クレジットカード</td>
+      <td>配送完了<br>おまとめ注文</td>
+    </tr>
+    <tr><td colspan="4"><div class="myp-actions"></div></td></tr>
+  </table>
+</body>
+</html>
+"""
+
+MOCK_MYP_TABLE_HTML_P2 = """
+<!doctype html>
+<html lang="ja">
+<head><meta charset="Shift_JIS"></head>
+<body>
+  <table class="myp-table myp-table-order">
+    <tr><th>注文日</th><th>商品名</th><th>発送月</th><th>ご注文金額</th><th>現在の状況</th></tr>
+    <tr>
+      <td rowspan="2"><a href="/myorder_d/00041/">2023/3/14<br>（No. 00041）</a></td>
+      <td><span class="goods-stat">予約品</span><br>S.H.Figuarts 孫悟飯ビースト</td>
+      <td></td>
+      <td>3,810円 （税込）<br>クレジットカード</td>
+      <td>おまとめ済み<br>00042</td>
+    </tr>
+    <tr><td colspan="4"><div class="myp-actions"></div></td></tr>
+    <tr>
+      <td rowspan="2"><a href="/myorder_d/00037/">2022/11/24<br>（No. 00037）</a></td>
+      <td><span class="goods-stat">予約品</span><br>METAL BUILD GNアームズ TYPE-E【2次：2023年7月発送分】</td>
+      <td></td>
+      <td>58,608円 （税込）<br>クレジットカード</td>
+      <td>おまとめ済み<br>00042</td>
+    </tr>
+    <tr><td colspan="4"><div class="myp-actions"></div></td></tr>
+    <tr>
+      <td rowspan="2"><a href="/myorder_d/00011/">2019/6/24<br>（No. 00011）</a></td>
+      <td><span class="goods-stat">予約品</span><br>【受注販売】METAL BUILD ストライクガンダム<br>他1品</td>
+      <td></td>
+      <td>24,437円 （税込）<br>コンビニ支払</td>
+      <td>配送完了</td>
+    </tr>
+    <tr><td colspan="4"><div class="myp-actions"></div></td></tr>
+  </table>
+</body>
+</html>
+"""
+
+
+def test_parse_myp_table_cp932_and_consolidation(tmp_path: Path) -> None:
+    p1 = tmp_path / "page_1.htm"
+    p2 = tmp_path / "page_2.htm"
+    p1.write_bytes(MOCK_MYP_TABLE_HTML_P1.encode("cp932"))
+    p2.write_bytes(MOCK_MYP_TABLE_HTML_P2.encode("cp932"))
+
+    raw_p1 = parse_orders_html(p1.read_bytes())
+    assert len(raw_p1) == 3
+    assert raw_p1[0].order_id == "00069"
+    assert raw_p1[0].item_title == "METAL BUILD ガンダムキュリオス"
+    assert raw_p1[0].unit_price_jpy == 39160
+    assert raw_p1[0].delivery_month == "2027-06-01"
+    assert raw_p1[1].unit_price_jpy == 0
+    assert raw_p1[2].order_status == "配送完了 おまとめ注文"
+
+    resolved = parse_orders_from_path(tmp_path)
+    ids = [r.order_id for r in resolved]
+    # Wrapper 00042 is dropped because child orders 00041 and 00037 are present
+    assert ids == ["00069", "00062", "00041", "00037", "00011"]
+
+    by_id = {r.order_id: r for r in resolved}
+    assert by_id["00041"].order_status == "配送完了 (おまとめ元: 00042)"
+    assert by_id["00037"].order_status == "配送完了 (おまとめ元: 00042)"
+    assert by_id["00011"].item_title == "【受注販売】METAL BUILD ストライクガンダム"
+    assert by_id["00011"].order_status == "配送完了 (他1品)"
+
+    # Standalone wrapper without children is preserved
+    only_p1 = resolve_consolidated_orders(raw_p1)
+    assert any(r.order_id == "00042" for r in only_p1)

@@ -10,6 +10,7 @@ from hobby_db.crawlers.pbandai import (
     crawl_orders,
     export_orders_csv,
     login_and_save_state,
+    parse_orders_from_path,
 )
 
 try:
@@ -26,6 +27,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--login",
         action="store_true",
         help="Launch headed browser to log in manually and save Playwright auth state.",
+    )
+    parser.add_argument(
+        "--from-html",
+        type=Path,
+        default=None,
+        help="Parse locally saved Premium Bandai order history HTML file or directory offline (skips Playwright).",
     )
     parser.add_argument(
         "--out",
@@ -94,12 +101,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Saved Premium Bandai auth state to: {saved_path}")
         return 0
 
-    rows = crawl_orders(
-        auth_state_path=auth_state_path,
-        headless=not args.headed,
-        max_pages=args.max_pages,
-        dump_html_dir=args.dump_html,
-    )
+    if args.from_html is not None:
+        rows = parse_orders_from_path(args.from_html)
+    else:
+        rows = crawl_orders(
+            auth_state_path=auth_state_path,
+            headless=not args.headed,
+            max_pages=args.max_pages,
+            dump_html_dir=args.dump_html,
+        )
     csv_path = export_orders_csv(rows, args.out)
     print(f"Exported {len(rows)} order line item(s) to: {csv_path}")
 
