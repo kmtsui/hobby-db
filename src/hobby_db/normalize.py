@@ -22,6 +22,9 @@ _DASH_TRANS = str.maketrans(
 
 _LENTICULAR_BRACKET_RE = re.compile(r"【[^】]*】")
 _PAREN_SALE_TAG_RE = re.compile(r"\((?:\d+次[:：][^)]*|[^)]*(?:発送|抽選販売|再販|受注生産))\)")
+_NOTE_SUFFIX_RE = re.compile(
+    r"\s*※(?:会場受け取り|後日配送|抽選販売|事前販売|事後販売|[^※]*(?:受け取り|発送))$"
+)
 _WHITESPACE_RE = re.compile(r"\s+")
 _JAN_DIGITS_RE = re.compile(r"\D+")
 _CURRENCY_AMOUNT_RE = re.compile(r"(?:[¥￥]\s*(\d[\d,]*)|(\d[\d,]*)\s*円)")
@@ -46,6 +49,7 @@ def normalize_title(raw_title: str) -> str:
     text = text.translate(_DASH_TRANS)
     text = _LENTICULAR_BRACKET_RE.sub(" ", text)
     text = _PAREN_SALE_TAG_RE.sub(" ", text)
+    text = _NOTE_SUFFIX_RE.sub("", text)
     text = _WHITESPACE_RE.sub(" ", text).strip()
     return text
 

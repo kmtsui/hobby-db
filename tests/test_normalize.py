@@ -30,6 +30,21 @@ def test_normalize_title_handles_unicode_hyphens() -> None:
     assert normalize_title(raw) == "HG 1/144 RX-78-2 ガンダム[クリアカラー]"
 
 
+def test_normalize_title_strips_fulfillment_note_suffix() -> None:
+    assert (
+        normalize_title(
+            "【開催記念商品】METAL BUILD ストライクフリーダムガンダム SOUL BLUE Ver. ※会場受け取り"
+        )
+        == "METAL BUILD ストライクフリーダムガンダム SOUL BLUE Ver."
+    )
+    assert (
+        normalize_title(
+            "【開催記念商品】METAL BUILD ダブルオーライザー デザイナーズブルー Ver. ※会場受け取り"
+        )
+        == "METAL BUILD ダブルオーライザー デザイナーズブルー Ver."
+    )
+
+
 def test_make_item_id_prefers_jan_else_stable_hash() -> None:
     assert make_item_id("Some Gunpla", "４５７３－１０２６－５００００") == "4573102650000"
     id1 = make_item_id("【1次：2025年5月発送】ＭＧ　ジム・スナイパーII")
