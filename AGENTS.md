@@ -37,7 +37,7 @@ uv run python scripts/update_prices.py --help
 - `src/hobby_db/config.py`: Sheet tab names, exact column tuples, enum lists, and `Settings` loader.
 - `src/hobby_db/models.py`: Pydantic v2 models (`CatalogItem`, `CatalogPriceUpdate`, `InventoryEntry`, `PriceHistoryRecord`, `PBandaiOrderRow`).
 - `src/hobby_db/normalize.py`: NFKC title cleaning, Japanese date/price parsers, brand/series inference, and deterministic IDs (`make_item_id`, `make_entry_id`, `make_log_id`).
-- `src/hobby_db/crawlers/pbandai.py`: Isolated `SELECTORS` dict, pure BeautifulSoup HTML helpers, BOM CSV writer, and Playwright `login_and_save_state` / `crawl_orders`.
+- `src/hobby_db/crawlers/pbandai.py`: Isolated `SELECTORS` dict, pure BeautifulSoup HTML helpers (supporting live cards and saved `table.myp-table-order` HTML), consolidated-order resolution, BOM CSV writer, and Playwright `login_and_save_state` / `crawl_orders`.
 - `src/hobby_db/ingestors/pbandai_csv.py`: Parses P-Bandai CSV exports into deduplicated `CatalogItem` and `InventoryEntry` rows.
 - `src/hobby_db/sheets/bootstrap.py`: Google Sheets `batchUpdate` formatting, dropdown validation rules, and `SEED_*` sample rows.
 - `src/hobby_db/sheets/client.py`: Idempotent `HobbySheetsClient` (cell-level `batch_update` and `append_rows`).
@@ -57,7 +57,7 @@ uv run python scripts/update_prices.py --help
 6. **Isolate fragile HTML selectors and keep parsers pure.** Keep CSS selectors in `SELECTORS` (`crawlers/pbandai.py`) and `SURUGAYA_SELECTORS` (`pricers/surugaya.py`). Keep HTML parsing pure BeautifulSoup functions taking strings, and import `playwright.sync_api` lazily inside runtime methods so unit tests require no browser binary.
 7. **Respect Japanese text normalization rules.** `normalize_title()` applies NFKC, strips `【...】` and parenthesized shipping/sale tags, and normalizes Unicode hyphens while preserving Japanese katakana and the prolonged sound mark `ー` (`U+30FC`). Ruff keeps `RUF001`, `RUF002`, and `RUF003` ignored in `pyproject.toml` because full-width Japanese literals/examples are intentional.
 8. **Security, privacy, and polite scraping.**
-   - Never commit `.env`, `secrets/`, service account JSONs, `.auth/`, or `data/*.csv`.
+   - Never commit `.env`, `secrets/`, service account JSONs, `.auth/`, `data/*.csv`, or `data/saved_html/`.
    - Never automate CAPTCHA/2FA bypasses; P-Bandai login must remain manual via `--login`.
    - Keep randomized polite delays in crawlers/pricers (overridable in constructors for fast unit tests).
    - Skip `SEED_*` sample rows in `scripts/update_prices.py`.

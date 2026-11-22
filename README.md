@@ -48,6 +48,12 @@ uv run python scripts/crawl_pbandai.py --out data/pbandai_orders.csv --import
 ```
 Use `--dump-html` to inspect raw HTML if P-Bandai markup changes, or `--no-expand-quantity` to keep multi-unit orders as a single `Inventory` row.
 
+### Offline HTML Fallback (If Playwright Is Blocked by Bot Protection)
+Save each page of `https://p-bandai.jp/myorder/` from your regular browser (**Webpage, HTML Only**) into `data/saved_html/`, then parse and import offline:
+```bash
+uv run python scripts/crawl_pbandai.py --from-html data/saved_html --out data/pbandai_orders.csv --import
+```
+
 ### Import an Existing CSV Manually
 ```bash
 uv run python scripts/import_orders.py data/pbandai_orders.csv
