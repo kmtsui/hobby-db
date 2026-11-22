@@ -1,0 +1,49 @@
+name: Weekly Market Price Sync
+
+on:
+  schedule:
+    # Run every Sunday at 03:00 UTC (12:00 JST)
+    - cron: "0 3 * * 0"
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Optional max number of stale items to update"
+        required: false
+        default: ""
+      dry_run:
+        description: "Run without writing updates to Google Sheets"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  price-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python and install dependencies
+        run: uv sync --no-dev
+
+      - name: Sync stale market prices
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          RAKUTEN_APP_ID: ${{ secrets.RAKUTEN_APP_ID }}
+          RAKUTEN_AFFILIATE_ID: ${{ secrets.RAKUTEN_AFFILIATE_ID }}
+          STALE_DAYS: ${{ vars.STALE_DAYS || '7' }}
+        run: |
+          ARGS=""
+          if [ -n "${{ inputs.limit }}" ]; then
+            ARGS="$ARGS --limit ${{ inputs.limit }}"
+          fi
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            ARGS="$ARGS --dry-run"
+          fi
+          uv run python scripts/update_prices.py $ARGS
