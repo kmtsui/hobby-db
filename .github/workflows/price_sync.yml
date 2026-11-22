@@ -38,8 +38,9 @@ jobs:
           RAKUTEN_APP_ID: ${{ secrets.RAKUTEN_APP_ID }}
           RAKUTEN_AFFILIATE_ID: ${{ secrets.RAKUTEN_AFFILIATE_ID }}
           STALE_DAYS: ${{ vars.STALE_DAYS || '7' }}
+          PRICE_SOURCES: ${{ vars.PRICE_SOURCES || 'mandarake,surugaya,yahoo_shopping,kakaku,yahoo_auctions,jungle' }}
         run: |
-          ARGS=""
+          ARGS="--sources $PRICE_SOURCES"
           if [ -n "${{ inputs.limit }}" ]; then
             ARGS="$ARGS --limit ${{ inputs.limit }}"
           fi

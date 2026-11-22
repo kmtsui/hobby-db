@@ -68,13 +68,16 @@ uv run python scripts/import_orders.py data/pbandai_orders.csv
 ```
 
 ### Refresh Stale Market Prices
+By default, `update_prices.py` crawls both `new` and `used` prices across all 6 token-free sources (`mandarake`, `surugaya`, `yahoo_shopping`, `kakaku`, `yahoo_auctions`, `jungle`, plus `rakuten` if `RAKUTEN_APP_ID` is set) and computes pooled IQR-filtered medians.
+
 Test on 5 items without modifying the Sheet:
 ```bash
 uv run python scripts/update_prices.py --limit 5 --dry-run
 ```
-Run a full stale refresh (default: older than `STALE_DAYS=7`):
+Run a full stale refresh (default: older than `STALE_DAYS=7`), or pass `--force` / `--sources`:
 ```bash
 uv run python scripts/update_prices.py
+uv run python scripts/update_prices.py --force --sources mandarake,surugaya,yahoo_shopping,jungle
 ```
 
 ---

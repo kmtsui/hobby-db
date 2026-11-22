@@ -41,7 +41,7 @@ uv run python scripts/update_prices.py --help
 - `src/hobby_db/ingestors/pbandai_csv.py`: Parses P-Bandai CSV exports into deduplicated `CatalogItem` and `InventoryEntry` rows.
 - `src/hobby_db/sheets/bootstrap.py`: Google Sheets `batchUpdate` formatting, dropdown validation rules, and `SEED_*` sample rows.
 - `src/hobby_db/sheets/client.py`: Idempotent `HobbySheetsClient` (cell-level `batch_update` and `append_rows`).
-- `src/hobby_db/pricers/`: `BasePricer`, junk keyword & IQR outlier filtering, `RakutenPricer`, and `SurugayaPricer`.
+- `src/hobby_db/pricers/`: `BasePricer`, junk keyword & IQR outlier filtering, `MandarakePricer`, `SurugayaPricer`, `YahooShoppingPricer`, `KakakuPricer`, `YahooAuctionsPricer`, `JunglePricer`, and `RakutenPricer`.
 - `scripts/`: Thin CLI wrappers (`bootstrap_sheet.py`, `crawl_pbandai.py`, `import_orders.py`, `update_prices.py`).
 - `tests/`: Offline unit tests with mock HTML fixtures, `httpx.MockTransport`, and an in-memory fake `gspread` spreadsheet.
 
@@ -54,7 +54,7 @@ uv run python scripts/update_prices.py --help
    - `entry_id`: `pbandai_{order_id}_{line_index}` for `quantity == 1`, expanding to `_u1.._u{quantity}` when `expand_quantity=True` (shipping assigned to `_u1` / line 1 only).
    - `log_id`: `{item_id}_{YYYYMMDD}` (append-only deduplication in `PriceHistory`).
 5. **Keep schema & docs synchronized.** Any column or enum change must be updated consistently across `src/hobby_db/config.py`, `src/hobby_db/models.py`, `src/hobby_db/sheets/bootstrap.py`, `APPSHEET_SETUP.md`, and `tests/test_sheets_client.py`.
-6. **Isolate fragile HTML selectors and keep parsers pure.** Keep CSS selectors in `SELECTORS` (`crawlers/pbandai.py`) and `SURUGAYA_SELECTORS` (`pricers/surugaya.py`). Keep HTML parsing pure BeautifulSoup functions taking strings, and import `playwright.sync_api` lazily inside runtime methods so unit tests require no browser binary.
+6. **Isolate fragile HTML selectors and keep parsers pure.** Keep CSS selectors in `SELECTORS` (`crawlers/pbandai.py`) and each pricer module (`SURUGAYA_SELECTORS`, `MANDARAKE_SELECTORS`, `YAHOO_SHOPPING_SELECTORS`, `KAKAKU_SELECTORS`, `YAHOO_AUCTIONS_SELECTORS`, `JUNGLE_SELECTORS`). Keep HTML parsing pure BeautifulSoup functions taking strings/bytes, and import `playwright.sync_api` lazily inside runtime methods so unit tests require no browser binary.
 7. **Respect Japanese text normalization rules.** `normalize_title()` applies NFKC, strips `【...】` and parenthesized shipping/sale tags, and normalizes Unicode hyphens while preserving Japanese katakana and the prolonged sound mark `ー` (`U+30FC`). Ruff keeps `RUF001`, `RUF002`, and `RUF003` ignored in `pyproject.toml` because full-width Japanese literals/examples are intentional.
 8. **Security, privacy, and polite scraping.**
    - Never commit `.env`, `secrets/`, service account JSONs, `.auth/`, `data/*.csv`, or `data/saved_html/`.
