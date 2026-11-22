@@ -1,0 +1,25 @@
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+secrets/
+*service*account*.json
+credentials*.json
+
+# Playwright auth state
+.auth/
+
+# Crawled data & HTML debug dumps
+data/*.csv
+data/debug_html/
+
+# Python / uv / pytest artifacts
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
