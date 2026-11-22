@@ -33,6 +33,14 @@ Copy the printed `GOOGLE_SHEET_ID=...` into `.env`. To initialize an existing Sh
 
 Next, complete the short manual checklist in [APPSHEET_SETUP.md](APPSHEET_SETUP.md).
 
+### 4. Link AppSheet & Add Views for `Inventory` and `PriceHistory`
+By default AppSheet only generates a navigation tab for `Catalog`. To view and edit all three tabs on PC and mobile:
+1. Under **Data -> Add new table**, add `Inventory` and `PriceHistory`, then link `item_id` (`Ref -> Catalog`) per [APPSHEET_SETUP.md](APPSHEET_SETUP.md).
+2. Under **Views -> Primary Navigation -> +**:
+   - Add **Inventory** (`For this data: Inventory`, View type: `table` or `deck`, sort by `order_date` descending, optionally group by `status`).
+   - Add **PriceHistory** (`For this data: PriceHistory`, View type: `table` or `chart`; optional since history also renders inline on each `Catalog` detail screen).
+3. Click **Save**. Keep the app in **Prototype (Not Deployed)** mode on the AppSheet FREE plan (do not disable **Require user sign-in**) and open it via **Share -> Copy sharing links -> Browser link** on PC or the AppSheet mobile app.
+
 ---
 
 ## Daily Workflows

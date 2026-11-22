@@ -65,5 +65,13 @@ IF(
 )
 ```
 
-## 5. Clean Up Seed Rows
+## 5. Add Navigation Views & Run in FREE Prototype Mode
+AppSheet only creates a primary view for `Catalog` automatically. Add navigation tabs for the remaining two tables:
+1. Open **Views** -> **Primary Navigation** -> **+**:
+   - **Inventory:** **For this data** = `Inventory`, **View type** = `table` (or `deck`), **Sort by** = `order_date` (`Descending`), **Group by** = `status` *(optional)*.
+   - **PriceHistory** *(optional, also shown inline inside each Catalog item)*: **For this data** = `PriceHistory`, **View type** = `table` or `chart`.
+2. Click **Save**.
+3. Leave the app in **Prototype (Not Deployed)** mode on the FREE plan—do **not** run Deploy and do **not** disable **Require user sign-in** (turning off sign-in exposes your Sheet publicly). Open it via **Share -> Copy sharing links -> Browser link** on PC or **App Gallery -> Owned by me** in the AppSheet mobile app.
+
+## 6. Clean Up Seed Rows
 Once **Save** finishes cleanly in AppSheet and column types look correct, open your Google Sheet and delete row 2 (`SEED_*`) from `Catalog`, `Inventory`, and `PriceHistory`.
